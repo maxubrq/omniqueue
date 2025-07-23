@@ -1,118 +1,167 @@
-<!-- OmniQueue README v0.1.0 -->
-
+<!-- OmniQueue README • v0.2.x -->
 <p align="center">
-  <a href="#" target="_blank">
-    <img src="https://dummyimage.com/600x200/000/fff&text=OmniQueue" alt="OmniQueue logo" />
-  </a>
+  <img src="https://dummyimage.com/400x120/000/fff&text=OmniQueue" alt="OmniQueue logo" />
 </p>
 
-<h1 align="center">OmniQueue</h1>
-
-<p align="center">
-  <em>One API – any queue.</em><br>
-  Unified, plug‑in message‑queue client for TypeScript covering RabbitMQ, AWS SQS, Azure Service Bus & ActiveMQ.
-</p>
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/@omniqueue/core"><img src="https://img.shields.io/npm/v/@omniqueue/core?color=cb3837" alt="npm version" /></a>
-  <img src="https://img.shields.io/badge/TypeScript-5.5-blue" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT license" />
-</p>
+> **One API – every queue.**  
+> Ship messages through RabbitMQ, AWS SQS, Azure Service Bus, ActiveMQ, Kafka *(kafkajs or librdkafka)*, and NATS / JetStream without changing a line of business code. Plug in “magic” add-ons—delays, DLQ time-travel, tracing, idempotency, zero-drop reliability—when you need them.
 
 ---
 
-## ✨ Why OmniQueue?
+## ✨ Key points
 
-* **One surface.** Swap out the broker, keep the code.
-* **Tiny core.** < 10 kB, adapters opt‑in via peer dependencies.
-* **Retries & DLQ** baked in via decorators.
-* **Serializer plug‑ins.** JSON by default, Avro/Protobuf optional.
-* **Instrumentation hooks.** OpenTelemetry‑ready without coupling.
-
----
-
-## 📦 Monorepo layout
-
-| Package               | Description                  | Peer Deps         |
-| --------------------- | ---------------------------- | ----------------- |
-| `@omniqueue/core`     | Contracts, registry, factory | —                 |
-| `@omniqueue/rabbitmq` | RabbitMQ adapter (amqplib)   | `@omniqueue/core` |
-| `@omniqueue/sqs`      | AWS SQS adapter (AWS SDK v3) | `@omniqueue/core` |
-| `@omniqueue/azuresb`  | Azure Service Bus adapter    | `@omniqueue/core` |
-| `@omniqueue/activemq` | ActiveMQ adapter (STOMP)     | `@omniqueue/core` |
+| 🔹 Core | 🔹 Magic add-ons |
+|--------|----------------|
+| Unified `Broker` interface with `send`, `receive`, explicit `ack()/nack()` | `later()` – cross-broker delayed messages |
+| Queue autoprovisioning (streams / topics / queues) | Time-travel DLQ replay |
+| Opt-in adapters (peerDeps) → *zero unused bytes* | OpenTelemetry auto-trace |
+| Type-safe payloads, pluggable serializers | Idempotent consumer decorator |
+| Tiny core (<10 kB) | Zero-Drop outbox for exactly-once publish |
 
 ---
 
-## 🚀 Quick start
+## 🛠️ Install
 
 ```bash
-# choose only the adapter you need
+# core + one adapter
 npm i @omniqueue/core @omniqueue/rabbitmq amqplib
-```
+
+# Kafka with kafkajs driver
+npm i @omniqueue/core @omniqueue/kafka @omniqueue/kafka-kafkajs kafkajs
+
+# Kafka with native librdkafka
+npm i @omniqueue/core @omniqueue/kafka @omniqueue/kafka-rdkafka node-rdkafka
+
+# NATS / JetStream
+npm i @omniqueue/core @omniqueue/nats @omniqueue/nats-natsjs nats
+````
+
+*Adapters use peer dependencies—install only what you need, nothing else is downloaded or bundled.*
+
+---
+
+## 🚀 Quick start
 
 ```ts
-import { create } from "@omniqueue/core"
-import "@omniqueue/rabbitmq"          // side‑effect: registers adapter
+import { create } from "@omniqueue/core";
+import "@omniqueue/rabbitmq";    // side-effect: registers adapter
 
-(async () => {
-  const mq = await create("rabbitmq", { url: "amqp://localhost" })
+const mq = await create("rabbitmq", { url: "amqp://localhost" });
 
-  await mq.send("jobs", { body: { id: "42" } })
+await mq.send("tasks", { body: { id: 1 } });
 
-  await mq.receive("jobs", async m => {
-    console.log("got", m.body)
-  })
-})();
+await mq.receive("tasks", async msg => {
+  console.log("got", msg.body);
+  await msg.ack();              // explicit success
+});
 ```
-
-> 🔄 Switch to SQS? Install `@omniqueue/sqs` + `@aws-sdk/client-sqs`, change provider string to `"sqs"` – done.
 
 ---
 
-## 🛠 Concepts & API
+## ⚡ Turn on the magic
 
 ```ts
-interface Message<T = unknown> { id?: string; body: T }
-interface Broker {
-  send(queue: string, msg: Message): Promise<void>
-  receive(queue: string, handler: (m: Message) => Promise<void>): Promise<void>
-  close(): Promise<void>
-}
+import { withScheduler }   from "@omniqueue/magic-scheduler";
+import { withIdempotency } from "@omniqueue/magic-dlq";
+import { withTracing }     from "@omniqueue/magic-trace";
+
+const raw   = await create("kafka", { brokers: ["k:9092"] });
+let broker  = withScheduler(raw);                 // later()
+broker      = withIdempotency(broker, redis);     // dup-killer
+broker      = withTracing(broker, { serviceName: "billing" });
+
+await broker.later("emails", { body: payload }, "tomorrow 09:00");
 ```
 
-* **Retries** – wrap with `RetryBroker` (exponential back‑off default).
-* **Dead‑letter** – specify `deadLetter` in `QueueDefinition`; adapters auto‑wire DLQ.
-* **Fan‑out** – use `produce()` / `subscribe()` on brokers that support topics.
-* **Serializer** – implement `{ serialize, deserialize }` and pass to factory.
+### Extra reliability
+
+```ts
+import { withZeroDrop } from "@omniqueue/magic-zero-drop";
+
+broker = withZeroDrop(broker, { outbox: "leveldb://./outbox" });
+await broker.sendGuaranteed("orders", { body: order });
+```
 
 ---
 
-## 🪄 Dynamic loading
+## 📦 Adapters
 
-Adapters self‑register via `register()` during import. Core falls back to dynamic `import("@omniqueue/${provider}")` if registry miss – giving you **fail‑fast** errors when a package is missing.
+| Package                     | Broker                       | Notes                                       |
+| --------------------------- | ---------------------------- | ------------------------------------------- |
+| `@omniqueue/rabbitmq`       | RabbitMQ                     | needs `amqplib`                             |
+| `@omniqueue/sqs`            | AWS SQS (Standard + FIFO)    | modular AWS SDK v3                          |
+| `@omniqueue/azuresb`        | Azure Service Bus            | queues, topics, sessions                    |
+| `@omniqueue/activemq`       | ActiveMQ (Artemis / Classic) | STOMP                                       |
+| `@omniqueue/kafka` + driver | Kafka                        | pick `kafka-kafkajs` **or** `kafka-rdkafka` |
+| `@omniqueue/nats` + driver  | NATS / JetStream             | pick `nats-natsjs`                          |
+
+All adapters expose the same `send / receive / ack / nack` contract.
 
 ---
 
-## 📈 Roadmap
+## 💡 Advanced snippets
 
-* [ ] Delayed/ scheduled messages (Rabbit x‑delay, SQS delay, Azure SB scheduled).
-* [ ] Testcontainers‑powered integration test suite.
-* [ ] CLI (`npx omniqueue`) to purge, peek, DLQ re‑drive.
-* [ ] Exactly‑once helpers (Rabbit publisher confirms, SQS FIFO dedup).
+<details>
+<summary><strong>Delayed FIFO on SQS</strong></summary>
+
+```ts
+await broker.later("payments.fifo",
+                   { body: {...}, id: "o-123" },
+                   12 * 60 * 1000,                // 12 min
+                   { groupId: "user-42" });
+```
+
+</details>
+
+<details>
+<summary><strong>Replay DLQ from last 24 h</strong></summary>
+
+```ts
+import { TimeTravelDLQ } from "@omniqueue/magic-dlq";
+
+const dlq   = new TimeTravelDLQ(broker);
+const stats = await dlq.replay({ since: "-24h" });
+console.log(`Restored ${stats.restored}/${stats.scanned}`);
+```
+
+</details>
+
+<details>
+<summary><strong>OpenTelemetry sampling</strong></summary>
+
+```ts
+import { TraceIdRatioBasedSampler } from "@opentelemetry/sdk-trace-node";
+broker = withTracing(broker, {
+  serviceName: "search-svc",
+  sampler: new TraceIdRatioBasedSampler(0.05)   // 5 %
+});
+```
+
+</details>
+
+---
+
+## 🗺️ Roadmap
+
+* CLI: `omniqueue doctor`, `omniqueue apply queues.yaml`
+* gRPC/HTTP code-gen stubs
+* Delay-topic poller container templates
+* Dashboard plugin for Grafana / Prom-metrics
 
 ---
 
 ## 🤝 Contributing
 
-1. `pnpm i`
-2. `pnpm -r build`
-3. Run `pnpm test`
-4. Submit PR – remember **one feature per PR**.
-
-We operate under the [Contributor Covenant](CODE_OF_CONDUCT.md).
+1. Fork → `pnpm i` → `pnpm -r build`
+2. Add tests (`pnpm test`) – Docker compose spins local RabbitMQ, LocalStack, etc.
+3. Submit PR. All adapters follow the same driver interface; lint passes = merge.
 
 ---
 
-## 📜 License
+## ⚖️ License
 
-MIT © 2025 OmniQueue Contributors
+MIT © Tran Dynasty OSS
+
+```
+::contentReference[oaicite:0]{index=0}
+```
