@@ -102,6 +102,54 @@ All adapters expose the same `send / receive / ack / nack` contract.
 ## 💡 Advanced snippets
 
 <details>
+<summary><strong>Runtime broker switch</strong></summary>
+
+```ts
+/**
+ * runtime-switch.ts
+ *
+ *   MQ_PROVIDER=rabbitmq ts-node runtime-switch.ts
+ *   MQ_PROVIDER=kafka     ts-node runtime-switch.ts
+ *   MQ_PROVIDER=sqs       ts-node runtime-switch.ts
+ *
+ * Adapters for the chosen provider must be installed
+ * (e.g. @omniqueue/rabbitmq + amqplib, or @omniqueue/kafka + kafkajs).
+ */
+import { create }      from "@omniqueue/core";
+import { withTracing } from "@omniqueue/magic-trace";
+
+// Pre-register the adapters you might switch between
+import "@omniqueue/rabbitmq";
+import "@omniqueue/kafka";
+import "@omniqueue/sqs";
+
+const provider = process.env.MQ_PROVIDER ?? "rabbitmq";
+
+async function main() {
+  const config: Record<string, any> = {
+    rabbitmq: { url: "amqp://localhost" },
+    kafka:    { brokers: ["localhost:9092"] },
+    sqs:      { region: "ap-southeast-1",
+                queueUrl: "http://localhost:4566/000000000000/tasks" }
+  };
+
+  const raw     = await create(provider, config[provider]);
+  const broker  = withTracing(raw, { serviceName: "runtime-demo" });
+
+  await broker.send("tasks", { body: { hello: provider } });
+
+  await broker.receive("tasks", async msg => {
+    console.log(`[${provider}] received ->`, msg.body);
+    await msg.ack();
+    await broker.close();            // graceful shutdown after demo
+  });
+}
+
+main().catch(console.error);
+```
+</details>
+
+<details>
 <summary><strong>Delayed FIFO on SQS</strong></summary>
 
 ```ts
