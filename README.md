@@ -155,10 +155,3 @@ broker = withTracing(broker, {
 1. Fork → `pnpm i` → `pnpm -r build`
 2. Add tests (`pnpm test`) – Docker compose spins local RabbitMQ, LocalStack, etc.
 3. Submit PR. All adapters follow the same driver interface; lint passes = merge.
-
----
-
-## ⚖️ License
-
-MIT © Tran Dynasty OSS
-::contentReference[oaicite:0]{index=0}
