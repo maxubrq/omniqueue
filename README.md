@@ -161,7 +161,4 @@ broker = withTracing(broker, {
 ## ⚖️ License
 
 MIT © Tran Dynasty OSS
-
-```
 ::contentReference[oaicite:0]{index=0}
-```
